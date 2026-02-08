@@ -5,7 +5,7 @@
 // as published by the Free Software Foundation.
 
 import { createOpencode } from '@opencode-ai/sdk';
-import type { AssistantMessage, Part, ToolPart } from '@opencode-ai/sdk';
+import type { AssistantMessage, Message, Part, ToolPart } from '@opencode-ai/sdk';
 import chalk, { type ChalkInstance } from 'chalk';
 import { resolve } from 'node:path';
 
@@ -49,6 +49,11 @@ interface OpenCodeModel {
 
 interface OpenCodePromptResponse {
   info: AssistantMessage;
+  parts: Part[];
+}
+
+interface OpenCodeSessionMessage {
+  info: Message;
   parts: Part[];
 }
 
@@ -194,6 +199,30 @@ function extractAssistantText(parts: Part[]): string {
     .trim();
 }
 
+function isToolPart(part: Part): part is ToolPart {
+  return part.type === 'tool';
+}
+
+function isAssistantSessionMessage(message: OpenCodeSessionMessage): message is {
+  info: AssistantMessage;
+  parts: Part[];
+} {
+  return message.info.role === 'assistant';
+}
+
+function getErrorMessage(error: AssistantMessage['error'] | undefined): string | null {
+  if (!error) {
+    return null;
+  }
+
+  const data = error.data as { message?: string } | undefined;
+  if (data?.message) {
+    return data.message;
+  }
+
+  return error.name || 'OpenCode execution failed';
+}
+
 function formatModelName(message: AssistantMessage): string | undefined {
   if (message.providerID && message.modelID) {
     return `${message.providerID}/${message.modelID}`;
@@ -308,33 +337,54 @@ export async function processOpenCodeMessageStream(
       throwOnError: true,
     }));
 
-    if (response.info.error) {
-      const errorData = response.info.error.data as { message?: string } | undefined;
-      const message = errorData?.message || response.info.error.name || 'OpenCode execution failed';
-      throw new Error(message);
+    const sessionMessages = unwrapData<OpenCodeSessionMessage[]>(await opencode.client.session.messages({
+      path: { id: session.id },
+      query: { directory: sourceDir, limit: 100 },
+      responseStyle: 'data',
+      throwOnError: true,
+    }));
+
+    const assistantMessages = sessionMessages.filter(isAssistantSessionMessage);
+    const latestAssistantMessage = assistantMessages.at(-1);
+    const parts = latestAssistantMessage?.parts || response.parts;
+    const responseInfo = latestAssistantMessage?.info || response.info;
+
+    const responseError = getErrorMessage(responseInfo.error);
+    if (responseError) {
+      throw new Error(responseError);
     }
 
-    const toolStarts = new Set<string>();
-    const toolEnds = new Set<string>();
-    for (const part of response.parts) {
-      if (part.type === 'tool') {
-        await handleToolPart(part, deps, toolStarts, toolEnds);
+    if (assistantMessages.length === 0 && response.info.error) {
+      const fallbackError = getErrorMessage(response.info.error);
+      if (fallbackError) {
+        throw new Error(fallbackError);
       }
     }
 
-    const rawContent = extractAssistantText(response.parts);
+    const toolParts = assistantMessages.length > 0
+      ? assistantMessages.flatMap((message) => message.parts.filter(isToolPart))
+      : parts.filter(isToolPart);
+
+    const toolStarts = new Set<string>();
+    const toolEnds = new Set<string>();
+    for (const part of toolParts) {
+      await handleToolPart(part, deps, toolStarts, toolEnds);
+    }
+
+    const rawContent = extractAssistantText(parts);
     const cleanedContent = filterJsonToolCalls(rawContent);
+    const turnCount = assistantMessages.length > 0 ? assistantMessages.length : (rawContent ? 1 : 0);
 
     if (cleanedContent.trim()) {
       progress.stop();
       outputLines(
-        formatAssistantOutput(cleanedContent, execContext, 1, description, colorFn)
+        formatAssistantOutput(cleanedContent, execContext, turnCount, description, colorFn)
       );
       progress.start();
     }
 
     if (rawContent.trim()) {
-      await auditLogger.logLlmResponse(1, rawContent);
+      await auditLogger.logLlmResponse(turnCount, rawContent);
     }
 
     const apiError = detectApiError(rawContent);
@@ -343,7 +393,9 @@ export async function processOpenCodeMessageStream(
     }
 
     const durationMs = Math.max(0, Date.now() - timer.startTime);
-    const cost = response.info.cost || 0;
+    const cost = assistantMessages.length > 0
+      ? assistantMessages.reduce((sum, message) => sum + (message.info.cost || 0), 0)
+      : (response.info.cost || 0);
 
     outputLines(
       formatResultOutput(
@@ -357,9 +409,9 @@ export async function processOpenCodeMessageStream(
       )
     );
 
-    const model = formatModelName(response.info);
+    const model = formatModelName(responseInfo);
     return {
-      turnCount: rawContent ? 1 : 0,
+      turnCount,
       result: rawContent || null,
       apiErrorDetected: apiError.detected,
       cost,
