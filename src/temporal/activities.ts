@@ -192,6 +192,7 @@ async function runAgentActivity(
           duration_ms: result.duration,
           cost_usd: 0,
           success: false,
+          backend: result.backend,
           model: result.model,
           error: `Spending cap likely reached: ${resultText.slice(0, 100)}`,
         });
@@ -208,6 +209,7 @@ async function runAgentActivity(
         duration_ms: result.duration,
         cost_usd: result.cost || 0,
         success: false,
+        backend: result.backend,
         model: result.model,
         error: result.error || 'Execution failed',
       });
@@ -223,6 +225,7 @@ async function runAgentActivity(
         duration_ms: result.duration,
         cost_usd: result.cost || 0,
         success: false,
+        backend: result.backend,
         model: result.model,
         error: 'Output validation failed',
       });
@@ -246,6 +249,7 @@ async function runAgentActivity(
       duration_ms: result.duration,
       cost_usd: result.cost || 0,
       success: true,
+      backend: result.backend,
       model: result.model,
       ...(commitHash && { checkpoint: commitHash }),
     });

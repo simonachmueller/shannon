@@ -86,29 +86,39 @@ export async function injectModelIntoReport(
     return;
   }
 
-  interface SessionData {
-    metrics: {
-      agents: Record<string, { model?: string }>;
-    };
-  }
+interface SessionData {
+  metrics: {
+      agents: Record<string, { backend?: string; model?: string }>;
+  };
+}
 
   const sessionData: SessionData = await fs.readJson(sessionJsonPath);
 
-  // 2. Extract unique models from all agents
+  // 2. Extract runtime metadata from all agents
+  const backends = new Set<string>();
   const models = new Set<string>();
   for (const agent of Object.values(sessionData.metrics.agents)) {
+    if (agent.backend) {
+      backends.add(agent.backend);
+    }
+
     if (agent.model) {
       models.add(agent.model);
     }
   }
 
-  if (models.size === 0) {
-    console.log(chalk.yellow('⚠️ No model information found in session.json'));
+  if (backends.size === 0 && models.size === 0) {
+    console.log(chalk.yellow('⚠️ No runtime metadata found in session.json'));
     return;
   }
 
+  const backendStr = Array.from(backends).join(', ');
   const modelStr = Array.from(models).join(', ');
-  console.log(chalk.blue(`📝 Injecting model info into report: ${modelStr}`));
+  const metadataSummary = [
+    ...(backendStr ? [`backend=${backendStr}`] : []),
+    ...(modelStr ? [`model=${modelStr}`] : []),
+  ].join(', ');
+  console.log(chalk.blue(`📝 Injecting runtime metadata into report: ${metadataSummary}`));
 
   // 3. Read the final report
   const reportPath = path.join(repoPath, 'deliverables', 'comprehensive_security_assessment_report.md');
@@ -126,23 +136,30 @@ export async function injectModelIntoReport(
   const match = reportContent.match(assessmentDatePattern);
 
   if (match) {
-    // Inject model line after Assessment Date
-    const modelLine = `- Model: ${modelStr}`;
+    // Inject runtime metadata lines after Assessment Date
+    const metadataLines = [
+      ...(backendStr ? [`- Backend: ${backendStr}`] : []),
+      ...(modelStr ? [`- Model: ${modelStr}`] : []),
+    ];
     reportContent = reportContent.replace(
       assessmentDatePattern,
-      `$1\n${modelLine}`
+      `$1\n${metadataLines.join('\n')}`
     );
-    console.log(chalk.green('✅ Model info injected into Executive Summary'));
+    console.log(chalk.green('✅ Runtime metadata injected into Executive Summary'));
   } else {
     // If no Assessment Date line found, try to add after Executive Summary header
     const execSummaryPattern = /^## Executive Summary$/m;
     if (reportContent.match(execSummaryPattern)) {
-      // Add model as first item in Executive Summary
+      // Add runtime metadata as first items in Executive Summary
+      const metadataLines = [
+        ...(backendStr ? [`- Backend: ${backendStr}`] : []),
+        ...(modelStr ? [`- Model: ${modelStr}`] : []),
+      ];
       reportContent = reportContent.replace(
         execSummaryPattern,
-        `## Executive Summary\n- Model: ${modelStr}`
+        `## Executive Summary\n${metadataLines.join('\n')}`
       );
-      console.log(chalk.green('✅ Model info added to Executive Summary header'));
+      console.log(chalk.green('✅ Runtime metadata added to Executive Summary header'));
     } else {
       console.log(chalk.yellow('⚠️ Could not find Executive Summary section'));
       return;

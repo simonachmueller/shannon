@@ -26,6 +26,7 @@ interface AttemptData {
   cost_usd: number;
   success: boolean;
   timestamp: string;
+  backend?: string | undefined;
   model?: string | undefined;
   error?: string | undefined;
 }
@@ -35,6 +36,7 @@ interface AgentMetrics {
   attempts: AttemptData[];
   final_duration_ms: number;
   total_cost_usd: number;
+  backend?: string | undefined;
   model?: string | undefined;
   checkpoint?: string | undefined;
 }
@@ -68,6 +70,7 @@ interface AgentEndResult {
   duration_ms: number;
   cost_usd: number;
   success: boolean;
+  backend?: string | undefined;
   model?: string | undefined;
   error?: string | undefined;
   checkpoint?: string | undefined;
@@ -172,6 +175,10 @@ export class MetricsTracker {
       timestamp: formatTimestamp(),
     };
 
+    if (result.backend) {
+      attempt.backend = result.backend;
+    }
+
     if (result.model) {
       attempt.model = result.model;
     }
@@ -189,6 +196,10 @@ export class MetricsTracker {
     if (result.success) {
       agent.status = 'success';
       agent.final_duration_ms = result.duration_ms;
+
+      if (result.backend) {
+        agent.backend = result.backend;
+      }
 
       if (result.model) {
         agent.model = result.model;
