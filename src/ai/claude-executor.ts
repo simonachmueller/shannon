@@ -255,7 +255,7 @@ export async function runClaudePrompt(
       ? await processOpenCodeMessageStream(
         fullPrompt,
         sourceDir,
-        { execContext, description, colorFn, progress, auditLogger },
+        { execContext, description, agentName, colorFn, progress, auditLogger },
         timer
       )
       : await processMessageStream(

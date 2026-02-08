@@ -7,6 +7,7 @@
 import { createOpencode } from '@opencode-ai/sdk';
 import type { AssistantMessage, Part, ToolPart } from '@opencode-ai/sdk';
 import chalk, { type ChalkInstance } from 'chalk';
+import { resolve } from 'node:path';
 
 import { Timer } from '../../utils/metrics.js';
 import { filterJsonToolCalls } from '../../utils/output-formatter.js';
@@ -20,10 +21,14 @@ import {
 import type { ExecutionContext } from '../types.js';
 import type { AuditLogger } from '../audit-logger.js';
 import type { ProgressManager } from '../progress-manager.js';
+import { MCP_AGENT_MAPPING } from '../../constants.js';
+import { getPromptNameForAgent } from '../../types/agents.js';
+import type { AgentName } from '../../types/index.js';
 
 interface OpenCodeMessageLoopDeps {
   execContext: ExecutionContext;
   description: string;
+  agentName: string | null;
   colorFn: ChalkInstance;
   progress: ProgressManager;
   auditLogger: AuditLogger;
@@ -59,10 +64,77 @@ const MIN_OPENCODE_PORT = 19000;
 const MAX_OPENCODE_PORT = 29000;
 const MAX_START_ATTEMPTS = 5;
 
+interface OpenCodeMcpLocalConfig {
+  type: 'local';
+  command: string[];
+  environment?: Record<string, string>;
+}
+
+interface OpenCodeConfig {
+  mcp?: Record<string, OpenCodeMcpLocalConfig>;
+}
+
 function outputLines(lines: string[]): void {
   for (const line of lines) {
     console.log(line);
   }
+}
+
+function getPlaywrightMcpConfig(playwrightMcpName: string): OpenCodeMcpLocalConfig {
+  const userDataDir = `/tmp/${playwrightMcpName}`;
+  const isDocker = process.env.SHANNON_DOCKER === 'true';
+
+  const command = [
+    'npx',
+    '@playwright/mcp@latest',
+    '--isolated',
+    '--user-data-dir',
+    userDataDir,
+  ];
+
+  if (isDocker) {
+    command.push('--executable-path', '/usr/bin/chromium-browser');
+    command.push('--browser', 'chromium');
+  }
+
+  const environment: Record<string, string> = Object.fromEntries(
+    Object.entries({
+      ...process.env,
+      PLAYWRIGHT_HEADLESS: 'true',
+      ...(isDocker && { PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1' }),
+    }).filter((entry): entry is [string, string] => entry[1] !== undefined)
+  );
+
+  return {
+    type: 'local',
+    command,
+    environment,
+  };
+}
+
+function buildOpenCodeConfig(sourceDir: string, agentName: string | null): OpenCodeConfig {
+  const helperServerPath = resolve(process.cwd(), 'mcp-server', 'dist', 'stdio-server.js');
+
+  const mcp: Record<string, OpenCodeMcpLocalConfig> = {
+    'shannon-helper': {
+      type: 'local',
+      command: ['node', helperServerPath],
+      environment: {
+        SHANNON_TARGET_DIR: sourceDir,
+      },
+    },
+  };
+
+  if (agentName) {
+    const promptName = getPromptNameForAgent(agentName as AgentName);
+    const playwrightMcpName = MCP_AGENT_MAPPING[promptName as keyof typeof MCP_AGENT_MAPPING] || null;
+
+    if (playwrightMcpName) {
+      mcp[playwrightMcpName] = getPlaywrightMcpConfig(playwrightMcpName);
+    }
+  }
+
+  return { mcp };
 }
 
 function unwrapData<T>(value: unknown): T {
@@ -160,8 +232,9 @@ async function handleToolPart(
   }
 }
 
-async function startOpenCodeSession() {
+async function startOpenCodeSession(sourceDir: string, agentName: string | null) {
   let lastError: Error | undefined;
+  const config = buildOpenCodeConfig(sourceDir, agentName);
 
   for (let attempt = 1; attempt <= MAX_START_ATTEMPTS; attempt++) {
     const port = getRandomPort();
@@ -170,6 +243,7 @@ async function startOpenCodeSession() {
         hostname: '127.0.0.1',
         port,
         timeout: 15000,
+        config,
       });
       return instance;
     } catch (error) {
@@ -199,8 +273,8 @@ export async function processOpenCodeMessageStream(
   deps: OpenCodeMessageLoopDeps,
   timer: Timer
 ): Promise<OpenCodeMessageLoopResult> {
-  const { execContext, description, colorFn, progress, auditLogger } = deps;
-  const opencode = await startOpenCodeSession();
+  const { execContext, description, colorFn, progress, auditLogger, agentName } = deps;
+  const opencode = await startOpenCodeSession(sourceDir, agentName);
 
   try {
     const session = unwrapData<OpenCodeSession>(await opencode.client.session.create({

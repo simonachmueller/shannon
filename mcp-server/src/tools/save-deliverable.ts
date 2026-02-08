@@ -38,7 +38,7 @@ export type SaveDeliverableInput = z.infer<typeof SaveDeliverableInputSchema>;
  * This factory pattern ensures each MCP server instance has its own targetDir,
  * preventing race conditions when multiple workflows run in parallel.
  */
-function createSaveDeliverableHandler(targetDir: string) {
+export function createSaveDeliverableHandler(targetDir: string) {
   return async function saveDeliverable(args: SaveDeliverableInput): Promise<ToolResult> {
     try {
       const { deliverable_type, content } = args;
