@@ -8,12 +8,23 @@ export type AiBackendName = 'anthropic' | 'opencode';
 
 const DEFAULT_BACKEND: AiBackendName = 'anthropic';
 
+import { PentestError } from '../../error-handling.js';
+
 export function getAiBackend(): AiBackendName {
   const raw = process.env.AI_BACKEND?.trim().toLowerCase();
 
-  if (raw === 'opencode') {
-    return 'opencode';
+  if (!raw) {
+    return DEFAULT_BACKEND;
   }
 
-  return DEFAULT_BACKEND;
+  if (raw === 'anthropic' || raw === 'opencode') {
+    return raw;
+  }
+
+  throw new PentestError(
+    `Invalid AI_BACKEND value '${raw}'. Supported values: anthropic, opencode`,
+    'config',
+    false,
+    { aiBackend: raw }
+  );
 }

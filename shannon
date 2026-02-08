@@ -118,6 +118,13 @@ cmd_start() {
   parse_args "$@"
 
   AI_BACKEND="${AI_BACKEND:-anthropic}"
+  AI_BACKEND="$(printf '%s' "$AI_BACKEND" | tr '[:upper:]' '[:lower:]')"
+
+  if [ "$AI_BACKEND" != "anthropic" ] && [ "$AI_BACKEND" != "opencode" ]; then
+    echo "ERROR: Invalid AI_BACKEND='$AI_BACKEND'"
+    echo "       Supported values: anthropic, opencode"
+    exit 1
+  fi
 
   # Validate required vars
   if [ -z "$URL" ] || [ -z "$REPO" ]; then
