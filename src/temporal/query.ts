@@ -35,6 +35,7 @@ interface AgentMetrics {
   outputTokens: number | null;
   costUsd: number | null;
   numTurns: number | null;
+  backend?: string | undefined;
   model?: string | undefined;
 }
 
@@ -124,10 +125,18 @@ async function queryWorkflow(): Promise<void> {
         const metrics = progress.agentMetrics[agent];
         const duration = metrics ? formatDuration(metrics.durationMs) : 'unknown';
         const cost = metrics?.costUsd ? `$${metrics.costUsd.toFixed(4)}` : '';
-        const model = metrics?.model ? ` [${metrics.model}]` : '';
+        const backend = metrics?.backend ? `${metrics.backend}` : '';
+        const model = metrics?.model ? `${metrics.model}` : '';
+        const modelInfo = backend && model
+          ? ` [${backend} | ${model}]`
+          : backend
+            ? ` [${backend}]`
+            : model
+              ? ` [${model}]`
+              : '';
         console.log(
           chalk.green(`  - ${agent}`) +
-            chalk.blue(model) +
+            chalk.blue(modelInfo) +
             chalk.gray(` (${duration}${cost ? ', ' + cost : ''})`)
         );
       }

@@ -39,6 +39,7 @@ export interface ClaudePromptResult {
   duration: number;
   turns?: number | undefined;
   cost: number;
+  backend?: string | undefined;
   model?: string | undefined;
   partialCost?: number | undefined;
   apiErrorDetected?: boolean | undefined;
@@ -306,6 +307,7 @@ export async function runClaudePrompt(
       duration,
       turns: turnCount,
       cost: totalCost,
+      backend: aiBackend,
       model,
       partialCost: totalCost,
       apiErrorDetected
@@ -329,6 +331,7 @@ export async function runClaudePrompt(
       success: false,
       duration,
       cost: totalCost,
+      backend: aiBackend,
       retryable: isRetryableError(err)
     };
   }

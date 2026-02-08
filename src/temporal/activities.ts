@@ -258,6 +258,7 @@ async function runAgentActivity(
       outputTokens: null,
       costUsd: result.cost ?? null,
       numTurns: result.turns ?? null,
+      backend: result.backend,
       model: result.model,
     };
   } catch (error) {

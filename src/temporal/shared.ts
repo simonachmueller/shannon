@@ -17,6 +17,7 @@ export interface AgentMetrics {
   outputTokens: number | null;
   costUsd: number | null;
   numTurns: number | null;
+  backend?: string | undefined;
   model?: string | undefined;
 }
 
