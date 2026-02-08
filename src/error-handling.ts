@@ -42,6 +42,30 @@ export class PentestError extends Error {
   }
 }
 
+function mapPentestErrorToTemporal(error: PentestError): TemporalErrorClassification {
+  if (error.retryable) {
+    return {
+      type: error.type === 'billing' ? 'BillingError' : 'TransientError',
+      retryable: true,
+    };
+  }
+
+  switch (error.type) {
+    case 'billing':
+      return { type: 'BillingError', retryable: false };
+    case 'config':
+      return { type: 'ConfigurationError', retryable: false };
+    case 'prompt':
+      return { type: 'InvalidRequestError', retryable: false };
+    case 'validation':
+      return { type: 'InvalidRequestError', retryable: false };
+    case 'filesystem':
+      return { type: 'ConfigurationError', retryable: false };
+    default:
+      return { type: 'UnknownError', retryable: false };
+  }
+}
+
 // Centralized error logging function
 export async function logError(
   error: Error & { type?: PentestErrorType; retryable?: boolean; context?: PentestErrorContext },
@@ -206,6 +230,10 @@ export function getRetryDelay(error: Error, attempt: number): number {
  * - Non-retryable errors: Temporal fails immediately
  */
 export function classifyErrorForTemporal(error: unknown): TemporalErrorClassification {
+  if (error instanceof PentestError) {
+    return mapPentestErrorToTemporal(error);
+  }
+
   const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
 
   // === BILLING ERRORS (Retryable with long backoff) ===

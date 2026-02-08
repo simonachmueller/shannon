@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import { Timer } from '../../utils/metrics.js';
 import { filterJsonToolCalls } from '../../utils/output-formatter.js';
 import { detectApiError } from '../message-handlers.js';
+import { PentestError } from '../../error-handling.js';
 import {
   formatAssistantOutput,
   formatResultOutput,
@@ -210,17 +211,76 @@ function isAssistantSessionMessage(message: OpenCodeSessionMessage): message is 
   return message.info.role === 'assistant';
 }
 
-function getErrorMessage(error: AssistantMessage['error'] | undefined): string | null {
+function mapOpenCodeError(error: AssistantMessage['error'] | undefined): PentestError | null {
   if (!error) {
     return null;
   }
 
-  const data = error.data as { message?: string } | undefined;
-  if (data?.message) {
-    return data.message;
+  const data = (error.data ?? {}) as {
+    message?: string;
+    statusCode?: number;
+    isRetryable?: boolean;
+    providerID?: string;
+  };
+
+  const message = data.message || error.name || 'OpenCode execution failed';
+  const lowerMessage = message.toLowerCase();
+  const statusCode = typeof data.statusCode === 'number' ? data.statusCode : undefined;
+  const isRetryable = typeof data.isRetryable === 'boolean' ? data.isRetryable : undefined;
+
+  const context: Record<string, unknown> = {
+    opencodeErrorName: error.name,
+    ...(statusCode !== undefined ? { statusCode } : {}),
+    ...(data.providerID ? { providerID: data.providerID } : {}),
+  };
+
+  const billingPatterns = [
+    'spending cap',
+    'spending limit',
+    'insufficient credits',
+    'credit balance is too low',
+    'quota exceeded',
+    'billing',
+  ];
+
+  if (billingPatterns.some((pattern) => lowerMessage.includes(pattern))) {
+    return new PentestError(`Billing limit reached: ${message}`, 'billing', true, context);
   }
 
-  return error.name || 'OpenCode execution failed';
+  if (error.name === 'ProviderAuthError') {
+    return new PentestError(`Provider authentication failed: ${message}`, 'config', false, context);
+  }
+
+  if (error.name === 'MessageOutputLengthError') {
+    return new PentestError(`Output length limit reached: ${message}`, 'validation', false, context);
+  }
+
+  if (error.name === 'MessageAbortedError') {
+    return new PentestError(`OpenCode message aborted: ${message}`, 'network', true, context);
+  }
+
+  if (error.name === 'APIError') {
+    if (statusCode === 401 || statusCode === 403) {
+      return new PentestError(`OpenCode API authentication failed (${statusCode}): ${message}`, 'config', false, context);
+    }
+
+    if (statusCode === 400 || statusCode === 413) {
+      return new PentestError(`OpenCode request invalid (${statusCode}): ${message}`, 'validation', false, context);
+    }
+
+    if (statusCode === 429 || (statusCode !== undefined && statusCode >= 500)) {
+      return new PentestError(`OpenCode API transient error (${statusCode}): ${message}`, 'network', true, context);
+    }
+
+    return new PentestError(
+      `OpenCode API error${statusCode !== undefined ? ` (${statusCode})` : ''}: ${message}`,
+      'network',
+      isRetryable ?? true,
+      context
+    );
+  }
+
+  return new PentestError(`OpenCode error (${error.name}): ${message}`, 'unknown', isRetryable ?? false, context);
 }
 
 function formatModelName(message: AssistantMessage): string | undefined {
@@ -349,15 +409,15 @@ export async function processOpenCodeMessageStream(
     const parts = latestAssistantMessage?.parts || response.parts;
     const responseInfo = latestAssistantMessage?.info || response.info;
 
-    const responseError = getErrorMessage(responseInfo.error);
+    const responseError = mapOpenCodeError(responseInfo.error);
     if (responseError) {
-      throw new Error(responseError);
+      throw responseError;
     }
 
     if (assistantMessages.length === 0 && response.info.error) {
-      const fallbackError = getErrorMessage(response.info.error);
+      const fallbackError = mapOpenCodeError(response.info.error);
       if (fallbackError) {
-        throw new Error(fallbackError);
+        throw fallbackError;
       }
     }
 
